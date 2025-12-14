@@ -145,12 +145,12 @@ class APIClient:
             print(f"[{model_type.upper()}] Cache Hit ⚡")
             return self.cache[cache_key]
 
-        # 2. Check Quota / Sleep if necessary
+        # Check local quota before sending
         self._check_quota_and_sleep(model_type)
 
         url = URL_SMALL if model_type == "small" else URL_LARGE
         model_name = "vnptai_hackathon_small" if model_type == "small" else "vnptai_hackathon_large"
-
+        
         payload = {
             "model": model_name,
             "messages": messages,
@@ -160,24 +160,40 @@ class APIClient:
             "n": n
         }
 
-        # 3. Network Call with Retry
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                # Use longer timeout
                 resp = requests.post(url, headers=self._get_headers(model_type), json=payload, timeout=120)
                 
                 if resp.status_code == 200:
                     data = resp.json()
-                    
-                    # Update Cache
                     self.cache[cache_key] = data
                     self._save_cache()
-                    
-                    # Update Usage Quota
-                    self._increment_usage(model_type)
-                    
+                    self._increment_usage(model_type) # Success -> Count it
                     return data
                 
+                # --- NEW FIX STARTS HERE ---
+                elif resp.status_code == 401:
+                    # Check if it's actually a Rate Limit error hidden in 401
+                    error_msg = resp.text.lower()
+                    if "rate limit" in error_msg or "quota" in error_msg:
+                        print(f"⚠️ API 401 Rate Limit Exceeded for {model_type.upper()}.")
+                        
+                        # Manually max out the counter so _check_quota_and_sleep triggers next time
+                        self.usage[model_type]['count'] = self.limits[model_type] 
+                        self._save_usage()
+                        
+                        # Force sleep immediately
+                        self._check_quota_and_sleep(model_type)
+                        
+                        # Retry this request after waking up
+                        continue 
+                    else:
+                        print(f"API Auth Error 401: {resp.text}")
+                        return None
+                # --- NEW FIX ENDS HERE ---
+
                 elif resp.status_code == 429:
                     print(f"⚠️ API 429 Rate Limit. Sleeping 60s...")
                     time.sleep(60)

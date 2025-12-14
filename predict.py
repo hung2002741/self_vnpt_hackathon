@@ -7,6 +7,17 @@ from utils.api_client import APIClient
 import argparse  
 from collections import Counter
 import re
+import logging
+
+# --- SETUP LOGGING ---
+# This creates a file 'execution_debug.log' that records every step
+logging.basicConfig(
+    filename='execution_debug.log', 
+    filemode='w', # Overwrite file on each new run
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    encoding='utf-8'
+)
 
 # Initialize Client
 client = APIClient()
@@ -23,6 +34,7 @@ try:
         VAL_VECTORS = json.load(f)
 except Exception as e:
     print(f"Warning: Could not load assets for RAG. {e}")
+    logging.warning(f"Asset Load Error: {e}")
 
 def cosine_similarity(v1, v2):
     return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
@@ -41,7 +53,6 @@ def get_similar_examples(question_text, top_k=2):
     best_examples = []
     
     for score, qid in scores[:top_k]:
-        # Handle potential string/int mismatch in keys
         ex = VAL_LOOKUP.get(str(qid)) or VAL_LOOKUP.get(int(qid))
         if ex:
             best_examples.append(ex)
@@ -63,13 +74,12 @@ def identify_topic(question):
     q_lower = question.lower()
     
     # 1. Math / Physics / STEM (Needs Reasoning)
-    # Look for LaTeX, math terms, units
     if "$" in question or "\\" in question: return "STEM"
-    math_terms = ["tính toán", "giá trị của", "hàm số", "xác suất", "tần số", "dao động", "gia tốc"]
+    math_terms = ["tính toán", "giá trị của", "hàm số", "xác suất", "tần số", "dao động", "gia tốc", "cm", "kg"]
     if any(t in q_lower for t in math_terms): return "STEM"
 
     # 2. Law / Politics / Safety (Needs Precision/Safety)
-    law_terms = ["luật", "nghị định", "thông tư", "hiến pháp", "phạt", "tù", "cơ quan có thẩm quyền", "vi phạm", "chính trị", "đảng"]
+    law_terms = ["luật", "nghị định", "thông tư", "hiến pháp", "phạt", "tù", "cơ quan", "vi phạm", "chính trị", "đảng", "bộ luật"]
     if any(t in q_lower for t in law_terms): return "LAW"
     
     # 3. Reading Comprehension (Long context)
@@ -78,82 +88,67 @@ def identify_topic(question):
     return "GENERAL"
 
 def construct_prompt(question, choices, examples, topic):
-    """
-    Optimized prompt based on topic.
-    """
     formatted_choices = format_choices(choices)
 
     rag_section = ""
     if examples:
-        rag_section = "Dưới đây là các ví dụ tương tự để tham khảo logic suy luận:\n\n"
+        rag_section = "Dưới đây là các ví dụ tham khảo:\n\n"
         for i, ex in enumerate(examples):
-            rag_section += f"--- Ví dụ {i+1} ---\n"
-            rag_section += f"Câu hỏi: {ex['question']}\n"
-            rag_section += f"Lựa chọn:\n{format_choices(ex['choices'])}\n"
-            rag_section += f"Đáp án đúng: {ex['answer']}\n" # Just give the answer to save tokens/confusion
+            rag_section += f"Ví dụ {i+1}:\nCâu hỏi: {ex['question']}\nĐáp án đúng: {ex['answer']}\n\n"
         rag_section += "---\n"
 
     # Specific Instructions based on Topic
     specific_instruction = ""
     if topic == "STEM":
-        specific_instruction = "Đây là câu hỏi Toán/Khoa học. Hãy suy luận từng bước (step-by-step) cẩn thận trước khi chọn đáp án."
+        specific_instruction = "Đây là câu hỏi Toán/Khoa học. Hãy suy luận từng bước (step-by-step) cẩn thận."
     elif topic == "LAW":
-        specific_instruction = "Đây là câu hỏi về Pháp luật/Chính trị. Hãy căn cứ chính xác vào quy định pháp luật Việt Nam hiện hành. Ưu tiên sự an toàn, tuân thủ pháp luật và đạo đức xã hội."
+        specific_instruction = "Đây là câu hỏi Pháp luật/Chính trị. Căn cứ chính xác vào văn bản pháp luật Việt Nam. Ưu tiên sự an toàn và tuân thủ."
     elif topic == "READING":
-        specific_instruction = "Đây là câu hỏi Đọc hiểu. CHỈ sử dụng thông tin được cung cấp trong văn bản trên để trả lời. Không bịa đặt thông tin bên ngoài."
+        specific_instruction = "Đây là câu hỏi Đọc hiểu. CHỈ sử dụng thông tin trong văn bản được cung cấp."
 
     system_prompt = f"""
-Bạn là một trợ lý AI thông minh chuyên giải các bài tập trắc nghiệm tại Việt Nam.
+Bạn là trợ lý AI chuyên giải trắc nghiệm.
 
-QUY TẮC TUYỆT ĐỐI:
-1. AN TOÀN LÀ TRÊN HẾT: Nếu câu hỏi liên quan đến hành vi trốn tránh pháp luật, bạo lực, hoặc vấn đề nhạy cảm, hãy chọn phương án thể hiện sự tuân thủ pháp luật và chuẩn mực đạo đức.
-2. CHỈ TRẢ LỜI MỘT CHỮ CÁI: Đầu ra cuối cùng phải là một chữ cái in hoa duy nhất (A, B, C, hoặc D).
+QUY TẮC:
+1. Trả lời MỘT chữ cái in hoa duy nhất (A, B, C, D).
+2. Nếu câu hỏi nhạy cảm/vi phạm pháp luật, chọn đáp án thể hiện sự tuân thủ/từ chối vi phạm.
 
 {rag_section}
 
-NHIỆM VỤ CỦA BẠN:
 Câu hỏi: {question}
 
-Các lựa chọn:
+Lựa chọn:
 {formatted_choices}
 
 {specific_instruction}
 
-Hãy suy nghĩ và đưa ra đáp án đúng nhất.
 Đáp án:"""
-
     return system_prompt
 
 def extract_answer(text):
     if not text: return None
-    # Prioritize looking for patterns like "Đáp án: A"
     match = re.search(r'(?:đáp án|chọn|kết quả).*?([A-F])\b', text, re.IGNORECASE)
     if match: return match.group(1).upper()
     
-    # Fallback: Find the last capital letter standing alone or with a dot
     matches = re.findall(r'\b([A-F])\b', text.upper())
-    if matches: return matches[-1] # Usually the last mention is the conclusion
-    
+    if matches: return matches[-1]
     return None
 
 def solve(row, use_rag=True):
     qid = row['qid']
     question = row['question']
     
-    # 1. Identify Topic & Select Model
+    # 1. Routing
     topic = identify_topic(question)
     
-    # Smart Routing Strategy
-    # We prioritize Large for Law and STEM because they require reasoning/precision
     if topic in ["STEM", "LAW"]:
         model = "large"
     elif topic == "READING":
-        # Small is surprisingly good at reading extraction, save Large for reasoning
-        # But if text is HUGE, Large might handle attention better.
         model = "large" if len(question) > 2000 else "small" 
     else:
-        # General knowledge / Common sense
         model = "small"
+
+    logging.info(f"[{qid}] PROCESSING | Topic: {topic} | Model: {model.upper()}")
 
     # 2. RAG
     examples = []
@@ -166,30 +161,42 @@ def solve(row, use_rag=True):
     
     print(f"[{qid}] Type: {topic} -> {model.upper()}...", end=" ")
     
-    # 4. API Call (n=1 is usually enough for Large to save tokens, n=3 for Small)
-    # Adjust n based on model to save quota/time? Or keep n=3 for accuracy?
-    # Let's keep n=3 for Small, n=1 for Large (Large is slow and smarter)
+    # 4. API Call
+    # n=1 for Large to avoid timeout/quota issues, n=3 for Small for accuracy
     n_samples = 1 if model == "large" else 3
     
     response = client.call_chat(
         messages, 
         model_type=model, 
         n=n_samples, 
-        temperature=0.6 # Lower temp for more precision
+        temperature=0.6
     )
     
     votes = []
     if response and 'choices' in response:
-        for choice in response['choices']:
-            ans = extract_answer(choice['message']['content'])
-            if ans: votes.append(ans)
+        for i, choice in enumerate(response['choices']):
+            content = choice['message']['content']
+            
+            # --- LOG RAW OUTPUT ---
+            logging.info(f"[{qid}] Raw Output #{i}: {content}")
+            
+            ans = extract_answer(content)
+            if ans: 
+                votes.append(ans)
+                logging.info(f"[{qid}] Extracted: {ans}")
+            else:
+                logging.warning(f"[{qid}] extraction failed for: {content}")
     
+    final_answer = "C" # Default
     if not votes:
         print("-> Failed")
-        return "C" # Blind guess
+        logging.error(f"[{qid}] FAILED - No valid votes obtained.")
+        return "C"
     
     final_answer, freq = Counter(votes).most_common(1)[0]
     print(f"-> {votes} -> {final_answer}")
+    logging.info(f"[{qid}] FINAL ANSWER: {final_answer}")
+    
     return final_answer
 
 def main():
@@ -203,6 +210,8 @@ def main():
     if os.path.exists('/code/private_test.json'): input_path = '/code/private_test.json'
 
     print(f"📂 Reading: {input_path}")
+    logging.info(f"Starting run. Input: {input_path}, RAG: {args.rag}")
+    
     with open(input_path, 'r', encoding='utf-8') as f:
         test_data = json.load(f)
 
@@ -222,6 +231,7 @@ def main():
         df.rename(columns={'qid': 'id'}, inplace=True)
         df.to_csv(output_file, index=False)
         print(f"\nSaved to {output_file}")
+        logging.info("Run complete. Results saved.")
 
 if __name__ == "__main__":
     main()
