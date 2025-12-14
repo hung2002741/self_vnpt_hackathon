@@ -68,22 +68,22 @@ def format_choices(choices_list):
     return "\n".join(formatted)
 
 def identify_topic(question):
-    """
-    Heuristics to identify topic for better model routing.
-    """
     q_lower = question.lower()
     
-    # 1. Math / Physics / STEM (Needs Reasoning)
+    # PRIORITY 1: Reading Comprehension (Context Extraction)
+    # If the user provides a text block, we MUST use it. 
+    # This fixes test_0077 being treated as "Law" just because it mentions "government".
+    if "đoạn thông tin" in q_lower or len(question) > 1000: 
+        return "READING"
+
+    # PRIORITY 2: STEM (Math/Science requires specific reasoning)
     if "$" in question or "\\" in question: return "STEM"
     math_terms = ["tính toán", "giá trị của", "hàm số", "xác suất", "tần số", "dao động", "gia tốc", "cm", "kg"]
     if any(t in q_lower for t in math_terms): return "STEM"
 
-    # 2. Law / Politics / Safety (Needs Precision/Safety)
+    # PRIORITY 3: Law / Politics (External Knowledge required)
     law_terms = ["luật", "nghị định", "thông tư", "hiến pháp", "phạt", "tù", "cơ quan", "vi phạm", "chính trị", "đảng", "bộ luật"]
     if any(t in q_lower for t in law_terms): return "LAW"
-    
-    # 3. Reading Comprehension (Long context)
-    if "đoạn thông tin" in q_lower or len(question) > 1200: return "READING"
     
     return "GENERAL"
 
@@ -97,21 +97,22 @@ def construct_prompt(question, choices, examples, topic):
             rag_section += f"Ví dụ {i+1}:\nCâu hỏi: {ex['question']}\nĐáp án đúng: {ex['answer']}\n\n"
         rag_section += "---\n"
 
-    # Specific Instructions based on Topic
+    # Specific Instructions
     specific_instruction = ""
     if topic == "STEM":
-        specific_instruction = "Đây là câu hỏi Toán/Khoa học. Hãy suy luận từng bước (step-by-step) cẩn thận."
+        specific_instruction = "Đây là câu hỏi Toán/Khoa học. Hãy suy luận từng bước (step-by-step) để tìm kết quả chính xác."
     elif topic == "LAW":
-        specific_instruction = "Đây là câu hỏi Pháp luật/Chính trị. Căn cứ chính xác vào văn bản pháp luật Việt Nam. Ưu tiên sự an toàn và tuân thủ."
+        specific_instruction = "Đây là câu hỏi về Pháp luật/Chính trị. Hãy căn cứ vào các văn bản pháp luật hiện hành và chuẩn mực đạo đức."
     elif topic == "READING":
-        specific_instruction = "Đây là câu hỏi Đọc hiểu. CHỈ sử dụng thông tin trong văn bản được cung cấp."
+        # Crucial change for History/Biography questions:
+        specific_instruction = "Đây là câu hỏi Đọc hiểu và trích xuất thông tin. Hãy TRẢ LỜI DỰA TRÊN ĐOẠN VĂN ĐƯỢC CUNG CẤP. Tuyệt đối trung thực với nội dung đoạn văn."
 
     system_prompt = f"""
-Bạn là trợ lý AI chuyên giải trắc nghiệm.
+Bạn là trợ lý AI thông minh.
 
 QUY TẮC:
 1. Trả lời MỘT chữ cái in hoa duy nhất (A, B, C, D).
-2. Nếu câu hỏi nhạy cảm/vi phạm pháp luật, chọn đáp án thể hiện sự tuân thủ/từ chối vi phạm.
+2. Nếu câu hỏi yêu cầu Đọc hiểu, hãy chỉ dùng thông tin trong văn bản để trả lời.
 
 {rag_section}
 
