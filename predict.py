@@ -64,41 +64,38 @@ def format_choices(choices_list):
     return "\n".join(formatted)
 
 def extract_answer(text):
-    """
-    Robust extraction logic. 
-    1. Search from the END of the text upwards.
-    2. Prioritize explicit formats like "Đáp án: A".
-    3. Fallback to looking for standalone letters.
-    """
     if not text: return None
-    
-    # Normalize
-    text = text.replace('*', '') # Remove bolding
-    lines = text.split('\n')
-    lines.reverse() # Process from bottom up
-    
-    # Pattern 1: Strong indicators (e.g., "Đáp án: A", "Chọn B", "-> C")
-    strong_pattern = r'(?:đáp án|chọn|kết quả|là|phương án)\s*[:\.]?\s*([A-F])\b'
-    
-    for line in lines:
-        match = re.search(strong_pattern, line, re.IGNORECASE)
-        if match:
-            return match.group(1).upper()
-            
-    # Pattern 2: Standalone letter at the start/end of a line (e.g., "A.", "B")
-    standalone_pattern = r'^([A-F])[\.\)]?$'
-    for line in lines:
-        line = line.strip()
-        match = re.search(standalone_pattern, line)
-        if match:
-            return match.group(1).upper()
+    text = text.replace('**', '') 
 
-    # Pattern 3: Last Resort - Find the very last capital letter A-F surrounded by boundaries
-    # This is risky but needed if the model just chats and doesn't format well.
-    matches = re.findall(r'\b([A-F])\b', text)
+    # Get non-empty lines and process from BOTTOM to TOP
+    lines = [line.strip() for line in text.strip().split('\n') if line.strip()]
+    lines.reverse()
+
+    for line in lines:
+        # PRIORITY 1: Answer at the END of the line (e.g. "... đáp án A.")
+        match_end = re.search(r'(?:đáp án|chọn|kết quả|là|phương án)\s*[:\.]?\s*([A-F])[\.\)]?$', line, re.IGNORECASE)
+        if match_end:
+            return match_end.group(1).upper()
+
+        # PRIORITY 2: Line STARTS with the choice (e.g. "A. Poisson...")
+        match_start = re.match(r'^([A-F])[\.\)]', line)
+        if match_start:
+            return match_start.group(1).upper()
+
+        # PRIORITY 3: Standalone letter
+        if re.match(r'^([A-F])$', line):
+            return line[0].upper()
+
+    # PRIORITY 4: Multi-line explicit pattern (e.g. "đáp án là:\n\nA")
+    pattern_multiline = r'(?:đáp án|chọn|kết quả|là)\s*[:\.]?\s*(?:\n\s*)?([A-F])[\.\)]'
+    matches = list(re.finditer(pattern_multiline, text, re.IGNORECASE))
     if matches:
-        return matches[-1].upper()
-        
+        return matches[-1].group(1).upper()
+
+    # PRIORITY 5: Last resort - Last capital letter boundary
+    found = re.findall(r'\b([A-F])\b', text)
+    if found: return found[-1]
+
     return None
 
 def construct_prompt(question, choices, examples, model_type):
