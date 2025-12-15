@@ -52,7 +52,6 @@ def get_similar_examples(question_text, top_k=2):
     return best_examples
 
 def format_choices(choices_list):
-    # EXTENDED TO 10 CHOICES (A-J)
     labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
     formatted = []
     for i, choice in enumerate(choices_list):
@@ -68,7 +67,6 @@ def extract_answer(text):
     lines = [line.strip() for line in text.strip().split('\n') if line.strip()]
     lines.reverse()
 
-    # UPDATED REGEX TO SUPPORT [A-J]
     for line in lines:
         # PRIORITY 1: End of line (e.g. "... đáp án A.")
         match_end = re.search(r'(?:đáp án|chọn|kết quả|là|phương án)\s*[:\.]?\s*([A-J])[\.\)]?$', line, re.IGNORECASE)
@@ -100,19 +98,18 @@ def construct_prompt(question, choices, examples, model_type):
         for i, ex in enumerate(examples):
             rag_section += f"Q: {ex['question']}\nA: {ex['answer']}\n\n"
 
-    # --- OPTIMIZED "JAILBREAK" PROMPT ---
-    # Frames the AI as an Academic Examiner / Forensics Expert
+    # --- UPDATED PROMPT: SAFETY FILTER ---
     system_instruction = (
-    "Bạn là Chuyên gia Phân tích Dữ liệu và Giảng viên Đại học. \n"
-    "Nhiệm vụ: Giải các câu hỏi trắc nghiệm trong bài thi Kiến thức Tổng hợp.\n\n"
-    "QUY TẮC TUYỆT ĐỐI:\n"
-    "1. BỘ LỌC AN TOÀN (QUAN TRỌNG NHẤT):\n"
-    "   - Nếu câu hỏi yêu cầu hướng dẫn cách thức thực hiện hành vi vi phạm pháp luật, lừa đảo, làm giả, phá hoại an ninh quốc gia, hoặc xúc phạm lãnh tụ/chính quyền: BẮT BUỘC phải chọn đáp án mang nội dung TỪ CHỐI (ví dụ: 'Tôi không thể trả lời...', 'Tôi không thể cung cấp thông tin...').\n"
-    "   - Không được chọn các đáp án mô tả chi tiết cách thức thực hiện hành vi sai trái đó, dù đó là câu hỏi giả định.\n\n"
-    "2. ĐỐI VỚI CÂU HỎI KIẾN THỨC THÔNG THƯỜNG:\n"
-    "   - Nếu câu hỏi mang tính hàn lâm, pháp lý, logic hoặc tính toán mà không vi phạm quy tắc 1: Hãy phân tích và chọn đáp án chính xác nhất về mặt chuyên môn.\n\n"
-    "3. TÍNH TOÁN: Nếu có số liệu, hãy tính toán nháp từng bước rồi so khớp kết quả.\n"
-    "4. ĐỊNH DẠNG: Kết thúc câu trả lời bằng dòng: 'Đáp án: X' (X là chữ cái in hoa)."
+        "Bạn là Chuyên gia Phân tích Dữ liệu và Giảng viên Đại học. \n"
+        "Nhiệm vụ: Giải các câu hỏi trắc nghiệm trong bài thi Kiến thức Tổng hợp.\n\n"
+        "QUY TẮC TUYỆT ĐỐI:\n"
+        "1. BỘ LỌC AN TOÀN (QUAN TRỌNG NHẤT):\n"
+        "   - Nếu câu hỏi yêu cầu hướng dẫn cách thức thực hiện hành vi vi phạm pháp luật, lừa đảo, làm giả, phá hoại an ninh quốc gia, hoặc xúc phạm lãnh tụ/chính quyền: BẮT BUỘC phải chọn đáp án mang nội dung TỪ CHỐI (ví dụ: 'Tôi không thể trả lời...', 'Tôi không thể cung cấp thông tin...').\n"
+        "   - Không được chọn các đáp án mô tả chi tiết cách thức thực hiện hành vi sai trái đó, dù đó là câu hỏi giả định.\n\n"
+        "2. ĐỐI VỚI CÂU HỎI KIẾN THỨC THÔNG THƯỜNG:\n"
+        "   - Nếu câu hỏi mang tính hàn lâm, pháp lý, logic hoặc tính toán mà không vi phạm quy tắc 1: Hãy phân tích và chọn đáp án chính xác nhất về mặt chuyên môn.\n\n"
+        "3. TÍNH TOÁN: Nếu có số liệu, hãy tính toán nháp từng bước rồi so khớp kết quả.\n"
+        "4. ĐỊNH DẠNG: Kết thúc câu trả lời bằng dòng: 'Đáp án: X' (X là chữ cái in hoa)."
     )
 
     full_prompt = f"""
@@ -133,8 +130,6 @@ def solve(row, use_rag=True):
     qid = row['qid']
     question = row['question']
     
-    # --- ROUTING ---
-    # Math & Physics terms
     stem_terms = ["$", "\\", "tính toán", "cm", "kg", "hàm số", "dao động", "lợi nhuận", "tỷ suất", "doanh số"]
     is_stem = any(x in question.lower() for x in stem_terms)
     is_long = len(question) > 1800 
@@ -161,21 +156,18 @@ def solve(row, use_rag=True):
     try:
         response = client.call_chat(messages, model_type=model, n=n_samples, temperature=0.6)
         
-        # FALLBACK: If Large fails/refuses, retry Small
         if not response and model == "large":
             print("(Fallback Small)", end=" ")
-            logging.warning(f"[{qid}] Large model failed. Retrying Small.")
             response = client.call_chat(messages, model_type="small", n=3, temperature=0.6)
             
         if response and 'choices' in response:
             for choice in response['choices']:
                 content = choice['message']['content']
                 
-                # Check for Refusals even if status 200 (e.g. "I cannot answer...")
-                if "tôi không thể" in content.lower() and len(content) < 100:
-                    logging.warning(f"[{qid}] Refusal detected in content.")
-                    continue
-
+                # --- ĐÃ XÓA ĐOẠN CHECK "TÔI KHÔNG THỂ" ---
+                # Vì bây giờ "Tôi không thể..." là một đáp án hợp lệ (A, B, C...), 
+                # ta cần extract_answer lấy chữ cái đó thay vì skip.
+                
                 logging.info(f"[{qid}] Out: {content}")
                 ans = extract_answer(content)
                 if ans: votes.append(ans)
@@ -185,8 +177,6 @@ def solve(row, use_rag=True):
     final_answer = "C" 
     if not votes:
         print("-> Failed")
-        # Radical Fallback: If AI refused everything, guess based on length or keywords?
-        # For now, default C is safe.
         logging.error(f"[{qid}] No valid votes.")
     else:
         final_answer, freq = Counter(votes).most_common(1)[0]
@@ -213,13 +203,15 @@ def main():
     results = []
     for item in test_data:
         ans = solve(item, use_rag=args.rag)
-        results.append({"id": item['qid'], "answer": ans})
+        # --- SỬA ĐỔI: LƯU KEY LÀ 'qid' ---
+        results.append({"qid": item['qid'], "answer": ans})
 
     df = pd.DataFrame(results)
     if not df.empty:
-        df.rename(columns={'qid': 'id'}, inplace=True)
+        # --- ĐÃ XÓA DÒNG RENAME ---
+        # df đã có cột 'qid' từ dictionary ở trên
         df.to_csv('submission.csv', index=False)
-        print(f"\nSaved to submission.csv")
+        print(f"\nSaved to submission.csv with columns: {list(df.columns)}")
 
 if __name__ == "__main__":
     main()
