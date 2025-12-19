@@ -7,7 +7,7 @@ from utils.api_client import APIClient
 import argparse  
 from collections import Counter
 import re
-import logging
+
 
 # Đảm bảo stdout/stderr dùng UTF-8 cho kaggle
 import sys
@@ -17,13 +17,6 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
-logging.basicConfig(
-    filename='execution_debug.log', 
-    filemode='w', 
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8'
-)
 
 client = APIClient()
 
@@ -46,9 +39,8 @@ try:
     with open('assets/val_embeddings.json', 'r', encoding='utf-8') as f:
         VAL_VECTORS = json.load(f)
         
-    logging.info(f"Loaded {len(VAL_LOOKUP)} reference items and {len(VAL_VECTORS)} vectors.")
 except Exception as e:
-    logging.warning(f"Asset Load Error: {e}")
+    print(f"Asset Load Error: {e}")
 
 def cosine_similarity(v1, v2):
     return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
@@ -182,17 +174,20 @@ def solve(row, use_rag=True):
     is_stem = any(x in question.lower() for x in stem_terms)
     is_long = len(question) > 1800 
     
+    temperature = 0.6
     if is_stem:
         model = "large"
-        n_samples = 1 
+        n_samples = 1
+        temperature = 0.3
     elif is_long:
         model = "large"
         n_samples = 1
+        temperature = 0.3
     else:
         model = "small"
-        n_samples = 3 
+        n_samples = 3
 
-    logging.info(f"[{qid}] Routing: STEM={is_stem}, LONG={is_long} -> {model.upper()}")
+    print(f"[{qid}] Routing: STEM={is_stem}, LONG={is_long} -> {model.upper()}")
 
     examples = get_similar_examples(question) if use_rag else []
     full_prompt = construct_prompt(question, choices, examples, model)
@@ -202,9 +197,8 @@ def solve(row, use_rag=True):
     
     votes = []
     try:
-        response = client.call_chat(messages, model_type=model, n=n_samples, temperature=0.6)
+        response = client.call_chat(messages, model_type=model, n=n_samples, temperature=temperature)
         
-        # Fallback logic cũ (Large -> Small)
         if not response and model == "large":
             print("(Fallback Small)", end=" ")
             response = client.call_chat(messages, model_type="small", n=3, temperature=0.6)
@@ -212,33 +206,29 @@ def solve(row, use_rag=True):
         if response and 'choices' in response:
             for choice in response['choices']:
                 content = choice['message']['content']
-                logging.info(f"[{qid}] Out: {content}")
+                print(f"[{qid}] Out: {content}")
                 ans = extract_answer(content)
                 if ans: votes.append(ans)
     except Exception as e:
-        logging.error(f"[{qid}] Error: {e}")
+        print(f"[{qid}] Error: {e}")
 
-    # --- PHẦN CHỈNH SỬA QUAN TRỌNG Ở ĐÂY ---
     final_answer = None
     
-    # 1. Nếu không có vote nào (API lỗi hoặc từ chối trả về text), tìm đáp án "Tôi không thể..."
     if not votes:
         refusal_ans = get_refusal_choice(choices)
         if refusal_ans:
             final_answer = refusal_ans
             print(f"-> Safety Fallback (Hardcoded): {final_answer}")
-            logging.info(f"[{qid}] Selected refusal answer via fallback: {final_answer}")
+            print(f"[{qid}] Selected refusal answer via fallback: {final_answer}")
         else:
             final_answer = "C" # Default cuối cùng nếu không tìm thấy gì
             print("-> Failed (Default C)")
-            logging.error(f"[{qid}] No valid votes and no refusal option found.")
+            print(f"[{qid}] No valid votes and no refusal option found.")
     else:
         # Nếu có vote, lấy vote cao nhất
         final_answer, freq = Counter(votes).most_common(1)[0]
         
-        # (Tùy chọn) Kiểm tra lại: Nếu model trả lời linh tinh nhưng trong choices có câu từ chối
-        # và câu hỏi có vẻ nhạy cảm, bạn có thể ưu tiên câu từ chối. 
-        # Tuy nhiên logic trên (fallback khi votes rỗng) thường là đủ cho trường hợp API chặn.
+        #  Kiểm tra lại: Nếu model trả lời linh tinh nhưng trong choices có câu từ chối
         print(f"-> {votes} -> {final_answer}")
     
     return final_answer
@@ -262,13 +252,10 @@ def main():
     results = []
     for item in test_data:
         ans = solve(item, use_rag=args.rag)
-        # --- SỬA ĐỔI: LƯU KEY LÀ 'qid' ---
         results.append({"qid": item['qid'], "answer": ans})
 
     df = pd.DataFrame(results)
     if not df.empty:
-        # --- ĐÃ XÓA DÒNG RENAME ---
-        # df đã có cột 'qid' từ dictionary ở trên
         df.to_csv('submission.csv', index=False)
         print(f"\nSaved to submission.csv with columns: {list(df.columns)}")
 
