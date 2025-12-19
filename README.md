@@ -31,23 +31,18 @@ Hệ thống sử dụng phương pháp **"Học theo đợt"** để cải thi�
 
 ### Quy Trình:
 
-```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Đợt 1      │      │   Đợt 2      │      │   Đợt 3      │
-│              │      │              │      │              │
-│ Nộp bài lần  │─────▶│ Nhận kết quả │─────▶│ Tạo RAG từ   │
-│ đầu (no RAG) │      │ từ platform  │      │ câu trả lời  │
-│              │      │              │      │ đúng         │
-└──────────────┘      └──────────────┘      └──────┬───────┘
-                                                    │
-                                                    ▼
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Đợt 6      │      │   Đợt 5      │      │   Đợt 4      │
-│              │      │              │      │              │
-│ Độ chính xác │◀─────│ Lặp lại quy  │◀─────│ Nộp bài với  │
-│ tối ưu       │      │ trình cải    │      │ RAG mới      │
-│              │      │ thiện        │      │              │
-└──────────────┘      └──────────────┘      └──────────────┘
+```mermaid
+flowchart LR
+    A[Đợt 1<br/>Nộp bài lần đầu<br/>no RAG] --> B[Đợt 2<br/>Nhận kết quả<br/>từ platform]
+    B --> C[Đợt 3<br/>Tạo RAG từ<br/>câu trả lời đúng]
+    C --> D[Đợt 4<br/>Nộp bài với<br/>RAG mới]
+    D --> E[Đợt 5<br/>Lặp lại quy<br/>trình cải thiện]
+    E --> F[Đợt 6<br/>Độ chính xác<br/>tối ưu]
+    
+    style A fill:#e3f2fd
+    style C fill:#fff9c4
+    style D fill:#c8e6c9
+    style F fill:#a5d6a7
 ```
 
 ### Chi Tiết Các Bước:
