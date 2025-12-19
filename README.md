@@ -5,73 +5,22 @@ Dự án xây dựng hệ thống AI tự động giải các câu hỏi trắc 
 ---
 
 ## Pipeline Flow
-
-```
-┌─────────────────┐
-│  Test Question  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Question Analysis         │
-│ - Check STEM keywords       │
-│ - Check question length     │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   RAG System (Optional)     │
-│ 1. Embed current question   │
-│ 2. Search similar examples  │
-│ 3. Retrieve top-K matches   │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Model Routing             │
-│ - STEM/Long → Large Model   │
-│ - Normal → Small Model      │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Prompt Construction       │
-│ + Safety Filter Rules       │
-│ + RAG Context (if any)      │
-│ + Question + Choices        │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   VNPT AI API Call          │
-│ - Small: n=3, temp=0.6      │
-│ - Large: n=1, temp=0.6      │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Answer Extraction         │
-│ - Pattern matching          │
-│ - Multi-priority parsing    │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Majority Voting           │
-│ (if n > 1)                  │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│   Safety Fallback           │
-│ - Check for refusal choices │
-│ - Default to "C" if failed  │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Final Prediction│
-└─────────────────┘
+```mermaid
+flowchart TD
+    A[Test Question] --> B[Question Analysis]
+    B --> |Check STEM keywords<br/>Check question length| C[RAG System Optional]
+    C --> |1. Embed current question<br/>2. Search similar examples<br/>3. Retrieve top-K matches| D[Model Routing]
+    D --> |STEM/Long → Large Model<br/>Normal → Small Model| E[Prompt Construction]
+    E --> |+ Safety Filter Rules<br/>+ RAG Context if any<br/>+ Question + Choices| F[VNPT AI API Call]
+    F --> |Small: n=3, temp=0.6<br/>Large: n=1, temp=0.6| G[Answer Extraction]
+    G --> |Pattern matching<br/>Multi-priority parsing| H[Majority Voting]
+    H --> |if n > 1| I[Safety Fallback]
+    I --> |Check for refusal choices<br/>Default to C if failed| J[Final Prediction]
+    
+    style A fill:#e1f5ff
+    style J fill:#d4edda
+    style F fill:#fff3cd
+    style I fill:#f8d7da
 ```
 
 ---
