@@ -7,19 +7,27 @@ from utils.api_client import APIClient
 def main():
     client = APIClient()
     
-    # 1. Load Validation Data
-    with open('data/val.json', 'r', encoding='utf-8') as f:
-        val_data = json.load(f)
-        
+    # Files to process
+    files_to_load = ['data/val.json', 'data/test_ans.json']
+    all_data = []
+
+    for file_path in files_to_load:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                all_data.extend(data)
+                print(f"Loaded {len(data)} items from {file_path}")
+        else:
+            print(f"Warning: {file_path} not found. Skipping.")
+
     embeddings_map = {}
+    print(f"Generating embeddings for {len(all_data)} total reference questions...")
     
-    print(f"Generating embeddings for {len(val_data)} validation questions...")
-    
-    for item in val_data:
-        qid = item['qid']
+    for item in all_data:
+        qid = str(item['qid'])
         text = item['question']
         
-        # Call API (it handles caching automatically)
+        # API handles caching automatically via local_cache.json
         vector = client.get_embedding(text)
         
         if vector:
@@ -27,12 +35,12 @@ def main():
         else:
             print(f"Failed to embed {qid}")
 
-    # 2. Save to assets folder
+    # Save to assets folder
     os.makedirs('assets', exist_ok=True)
     with open('assets/val_embeddings.json', 'w', encoding='utf-8') as f:
         json.dump(embeddings_map, f)
         
-    print("Success! Saved to assets/val_embeddings.json")
+    print(f"Success! Saved {len(embeddings_map)} embeddings to assets/val_embeddings.json")
 
 if __name__ == "__main__":
     main()

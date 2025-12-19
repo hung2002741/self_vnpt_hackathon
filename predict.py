@@ -9,6 +9,14 @@ from collections import Counter
 import re
 import logging
 
+# Đảm bảo stdout/stderr dùng UTF-8 cho kaggle
+import sys
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
 logging.basicConfig(
     filename='execution_debug.log', 
     filemode='w', 
@@ -21,13 +29,24 @@ client = APIClient()
 
 # Load Assets
 VAL_DATA = []
+VAL_LOOKUP = {}
 VAL_VECTORS = {}
+
 try:
-    with open('data/val.json', 'r', encoding='utf-8') as f:
-        VAL_DATA = json.load(f)
-        VAL_LOOKUP = {str(item['qid']): item for item in VAL_DATA}
+    # Load both source JSONs to build the lookup dictionary
+    paths = ['data/val.json', 'data/test_ans.json']
+    for p in paths:
+        if os.path.exists(p):
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for item in data:
+                    VAL_LOOKUP[str(item['qid'])] = item
+    
+    # Load the pre-computed embeddings
     with open('assets/val_embeddings.json', 'r', encoding='utf-8') as f:
         VAL_VECTORS = json.load(f)
+        
+    logging.info(f"Loaded {len(VAL_LOOKUP)} reference items and {len(VAL_VECTORS)} vectors.")
 except Exception as e:
     logging.warning(f"Asset Load Error: {e}")
 
